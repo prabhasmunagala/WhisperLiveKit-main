@@ -582,48 +582,51 @@ class AudioProcessor:
                     logger.warning("Failed to write audio data to FFmpeg")
 
     async def handle_pcm_data(self) -> None:
-        # Process when enough data
-        if len(self.pcm_buffer) < self.bytes_per_sec:
-            return
-
-        if len(self.pcm_buffer) > self.max_bytes_per_sec:
-            logger.warning(
-                f"Audio buffer too large: {len(self.pcm_buffer) / self.bytes_per_sec:.2f}s. "
-                f"Consider using a smaller model."
-            )
-
-        chunk_size = min(len(self.pcm_buffer), self.max_bytes_per_sec)
-        aligned_chunk_size = (chunk_size // self.bytes_per_sample) * self.bytes_per_sample
-        
-        if aligned_chunk_size == 0:
-            return
-        pcm_array = self.convert_pcm_to_float(self.pcm_buffer[:aligned_chunk_size])
-        self.pcm_buffer = self.pcm_buffer[aligned_chunk_size:]
-
-        num_samples = len(pcm_array)
-        chunk_sample_start = self.total_pcm_samples
-        chunk_sample_end = chunk_sample_start + num_samples
-
-        res = None
-        if self.args.vac:
-            res = self.vac(pcm_array)
-
-        if res is not None:
-            if "start" in res and self.current_silence:
-                await self._end_silence()
+        # Process while enough data
+        while len(self.pcm_buffer) >= self.bytes_per_sec:
             
-            if "end" in res and not self.current_silence:
-                pre_silence_chunk = self._slice_before_silence(
-                    pcm_array, chunk_sample_start, res.get("end")
+            if len(self.pcm_buffer) > self.max_bytes_per_sec:
+                logger.warning(
+                    f"Audio buffer too large: {len(self.pcm_buffer) / self.bytes_per_sec:.2f}s. "
+                    f"Consider using a smaller model."
                 )
-                if pre_silence_chunk is not None and pre_silence_chunk.size > 0:
-                    await self._enqueue_active_audio(pre_silence_chunk)
-                await self._begin_silence()
 
-        if not self.current_silence:
-            await self._enqueue_active_audio(pcm_array)
+            chunk_size = min(len(self.pcm_buffer), self.max_bytes_per_sec)
+            aligned_chunk_size = (chunk_size // self.bytes_per_sample) * self.bytes_per_sample
+            
+            if aligned_chunk_size == 0:
+                break
+            
+            pcm_array = self.convert_pcm_to_float(self.pcm_buffer[:aligned_chunk_size])
+            self.pcm_buffer = self.pcm_buffer[aligned_chunk_size:]
 
-        self.total_pcm_samples = chunk_sample_end
+            num_samples = len(pcm_array)
+            chunk_sample_start = self.total_pcm_samples
+            chunk_sample_end = chunk_sample_start + num_samples
 
-        if not self.args.transcription and not self.args.diarization:
-            await asyncio.sleep(0.1)
+            res = None
+            if self.args.vac:
+                res = self.vac(pcm_array)
+
+            if res is not None:
+                if "start" in res and self.current_silence:
+                    await self._end_silence()
+                
+                if "end" in res and not self.current_silence:
+                    pre_silence_chunk = self._slice_before_silence(
+                        pcm_array, chunk_sample_start, res.get("end")
+                    )
+                    if pre_silence_chunk is not None and pre_silence_chunk.size > 0:
+                        await self._enqueue_active_audio(pre_silence_chunk)
+                    await self._begin_silence()
+
+            if not self.current_silence:
+                await self._enqueue_active_audio(pcm_array)
+
+            self.total_pcm_samples = chunk_sample_end
+
+            if not self.args.transcription and not self.args.diarization:
+                await asyncio.sleep(0.1)
+            
+            # Yield to allow other tasks to run
+            await asyncio.sleep(0)

@@ -5,14 +5,29 @@ import websockets
 import json
 import os
 
-async def upload_file(url, file_path):
+async def upload_file(url, file_path, output_file=None):
+    print(f"Uploading {file_path} to {url}...")
+    print("Processing... this may take a while for large files.")
     async with aiohttp.ClientSession() as session:
         with open(file_path, 'rb') as f:
             data = {'file': f}
-            async with session.post(url, data=data) as response:
+            # Increase timeout for long files
+            timeout = aiohttp.ClientTimeout(total=3600) 
+            async with session.post(url, data=data, timeout=timeout) as response:
                 if response.status == 200:
                     result = await response.json()
-                    print(f"Transcript: {result.get('transcript')}")
+                    transcript = result.get('transcript')
+                    print("Processing complete.")
+                    
+                    if output_file:
+                        with open(output_file, 'w') as f_out:
+                            if output_file.endswith('.json'):
+                                json.dump(result, f_out, indent=2)
+                            else:
+                                f_out.write(transcript)
+                        print(f"Output saved to {output_file}")
+                    else:
+                        print(f"Transcript: {transcript}")
                 else:
                     print(f"Error: {response.status}")
                     print(await response.text())
@@ -65,6 +80,7 @@ def main():
     upload_parser = subparsers.add_parser("upload", help="Upload a .wav file for transcription")
     upload_parser.add_argument("file_path", help="Path to the .wav file")
     upload_parser.add_argument("--url", default="http://localhost:8000/upload", help="Server URL")
+    upload_parser.add_argument("--output", help="Path to save the output (e.g., result.json or result.txt)")
 
     stream_parser = subparsers.add_parser("stream", help="Stream a .wav file for transcription")
     stream_parser.add_argument("file_path", help="Path to the .wav file")
@@ -73,7 +89,7 @@ def main():
     args = parser.parse_args()
 
     if args.command == "upload":
-        asyncio.run(upload_file(args.url, args.file_path))
+        asyncio.run(upload_file(args.url, args.file_path, args.output))
     elif args.command == "stream":
         asyncio.run(stream_file(args.url, args.file_path))
 
