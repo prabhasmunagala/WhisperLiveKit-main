@@ -110,6 +110,9 @@ async def upload_file(file: UploadFile = File(...)):
         audio_processor.is_pcm_input = True
         # Ensure ffmpeg_manager is not used/started
         audio_processor.ffmpeg_manager = None
+        # Disable VAD for upload mode to ensure all audio is processed
+        audio_processor.vac = None
+        logger.info("VAD disabled for upload mode to ensure complete processing")
         
         results_generator = await audio_processor.create_tasks()
         

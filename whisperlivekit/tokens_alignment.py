@@ -48,24 +48,31 @@ class TokensAlignment:
         self.new_translation_buffer = self.state.new_translation_buffer
 
     def add_translation(self, segment: Segment) -> None:
-        """Append translated text segments that overlap with a segment."""
+        """Append translated text from TimedText blocks that overlap with a segment."""
         import logging
         logger = logging.getLogger(__name__)
-        logger.info(f"DEBUG: Processing segment {segment.start}-{segment.end} text='{segment.text}'")
         
-        found_overlap = False
-        for ts in self.all_translation_segments:
-            if ts.is_within(segment):
-                logger.info(f"DEBUG: Found overlap with translation: '{ts.text}'")
-                if segment.translation is None:
-                    segment.translation = ""
-                segment.translation += ts.text + (self.sep if ts.text else '')
-                found_overlap = True
-            elif segment.translation:
-                break
+        if segment.translation is None:
+            segment.translation = ""
         
-        if not found_overlap:
-             logger.info(f"DEBUG: No translation overlap found for segment starting at {segment.start}")
+        # all_translation_segments contains TimedText objects with start, end, and text
+        # We need to find which TimedText blocks overlap with this segment's time range
+        for translation_block in self.all_translation_segments:
+            if not hasattr(translation_block, 'start') or not hasattr(translation_block, 'end'):
+                continue
+                
+            # Check if there's any time overlap between segment and translation block
+            overlap_start = max(segment.start, translation_block.start)
+            overlap_end = min(segment.end, translation_block.end)
+            
+            if overlap_end > overlap_start:  # There is overlap
+                # Add the translation text from this block
+                if hasattr(translation_block, 'text') and translation_block.text:
+                    if segment.translation:
+                        segment.translation += self.sep
+                    segment.translation += translation_block.text
+                    logger.info(f"DEBUG: Added translation '{translation_block.text}' to segment {segment.start}-{segment.end}")
+
 
 
 
