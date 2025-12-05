@@ -451,8 +451,10 @@ class AlignAtt:
         end_encode = time()
         # print('Encoder duration:', end_encode-beg_encode)
                 
-        if self.cfg.language == "auto" and self.state.detected_language is None and self.state.first_timestamp:
-            seconds_since_start = self.segments_len() - self.state.first_timestamp
+        if self.cfg.language == "auto" and self.state.detected_language is None:
+            # If we haven't detected start of speech, assume 0 for now to allow detection on buffer
+            first_ts = self.state.first_timestamp if self.state.first_timestamp is not None else 0.0
+            seconds_since_start = self.segments_len() - first_ts
             if seconds_since_start >= 2.0:
                 language_tokens, language_probs = self.lang_id(encoder_feature) 
                 top_lan, p = max(language_probs[0].items(), key=lambda x: x[1])

@@ -304,11 +304,13 @@ class AudioProcessor:
                     continue
                 elif isinstance(item, np.ndarray):
                     pcm_array = item
+                    logger.info(f"DEBUG: Received audio chunk of {len(pcm_array)} samples ({len(pcm_array)/self.sample_rate:.2f}s)")
                     logger.info(asr_processing_logs)
                     cumulative_pcm_duration_stream_time += len(pcm_array) / self.sample_rate
                     stream_time_end_of_current_pcm = cumulative_pcm_duration_stream_time
                     self.transcription.insert_audio_chunk(pcm_array, stream_time_end_of_current_pcm)
                     new_tokens, current_audio_processed_upto = await asyncio.to_thread(self.transcription.process_iter)
+                    logger.info(f"DEBUG: process_iter returned {len(new_tokens) if new_tokens else 0} tokens")
                     new_tokens = new_tokens or []
 
                 _buffer_transcript = self.transcription.get_buffer()
@@ -636,7 +638,9 @@ class AudioProcessor:
                         await self._enqueue_active_audio(pre_silence_chunk)
                     await self._begin_silence()
 
-            if not self.current_silence:
+            # If VAD is disabled, always enqueue audio
+            # If VAD is enabled, only enqueue if not in silence
+            if self.vac is None or not self.current_silence:
                 await self._enqueue_active_audio(pcm_array)
 
             self.total_pcm_samples = chunk_sample_end
