@@ -653,6 +653,33 @@ class AlignAtt:
 
         return timestamped_words
 
+    def flush(self):
+        """Flush pending incomplete tokens as a final result."""
+        if not self.state.pending_incomplete_tokens:
+            return []
+            
+        logger.info(f"Flushing {len(self.state.pending_incomplete_tokens)} pending tokens.")
+        new_hypothesis = self.state.pending_incomplete_tokens
+        self.state.pending_incomplete_tokens = [] # Clear them
+        
+        split_words, split_tokens = self.tokenizer.split_to_word_tokens(new_hypothesis)
+        
+        # We don't have timestamps for these flushed tokens since they were held back
+        # We'll just append them to the last known time or current time
+        current_time = self.segments_len()
+        
+        timestamped_words = []
+        for word in split_words:
+             timestamped_words.append(ASRToken(
+                start=round(current_time, 2),
+                end=round(current_time + 0.1, 2),
+                text=word,
+                speaker=self.state.speaker,
+                detected_language=self.state.detected_language
+            ).with_offset(self.state.global_time_offset))
+            
+        return timestamped_words
+
     def _process_cross_attention(
         self, 
         cross_attns: List[torch.Tensor], 

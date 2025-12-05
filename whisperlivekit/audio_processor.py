@@ -260,6 +260,20 @@ class AudioProcessor:
                 item = await get_all_from_queue(self.transcription_queue)
                 if item is SENTINEL:
                     logger.debug("Transcription processor received sentinel. Finishing.")
+                    # Flush pending tokens if supported
+                    if hasattr(self.transcription, 'flush'):
+                        logger.info("Flushing transcription buffer...")
+                        flushed_tokens, current_audio_processed_upto = await asyncio.to_thread(self.transcription.flush)
+                        if flushed_tokens:
+                            logger.info(f"Flushed {len(flushed_tokens)} tokens.")
+                            async with self.lock:
+                                self.state.tokens.extend(flushed_tokens)
+                                self.state.new_tokens.extend(flushed_tokens)
+                            
+                            # Also feed flushed tokens to translation
+                            if self.translation_queue:
+                                for token in flushed_tokens:
+                                    await self.translation_queue.put(token)
                     break
 
                 asr_internal_buffer_duration_s = len(getattr(self.transcription, 'audio_buffer', [])) / self.transcription.SAMPLING_RATE
@@ -381,8 +395,10 @@ class AudioProcessor:
                     new_translation, new_translation_buffer = self.translation.validate_buffer_and_reset()
                     pass
                 else:
+                    logger.info(f"DEBUG: Translation processor received token: {item} with keys {item.__dict__ if hasattr(item, '__dict__') else 'no dict'}")
                     self.translation.insert_tokens(item)
                     new_translation, new_translation_buffer = await asyncio.to_thread(self.translation.process)
+                    logger.info(f"DEBUG: Translation process result: {new_translation}")
                 async with self.lock:
                     self.state.new_translation.append(new_translation)
                     self.state.new_translation_buffer = new_translation_buffer

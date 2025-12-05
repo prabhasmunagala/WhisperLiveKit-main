@@ -137,6 +137,20 @@ class SimulStreamingOnlineProcessor:
         except Exception as e:
             logger.exception(f"SimulStreaming warmup failed: {e}")
 
+    def flush(self) -> Tuple[List[ASRToken], float]:
+        """
+        Flush remaining buffer from the model.
+        """
+        try:
+            timestamped_words = self.model.flush()
+            if not timestamped_words:
+                return [], self.end
+            
+            return timestamped_words, self.end
+        except Exception as e:
+            logger.exception(f"SimulStreaming flush error: {e}")
+            return [], self.end
+
     def __del__(self):
         gc.collect()
         torch.cuda.empty_cache()

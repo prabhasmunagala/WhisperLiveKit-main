@@ -138,12 +138,60 @@ async def upload_file(file: UploadFile = File(...)):
         last_response = None
         logger.info("Starting to consume results...")
         
-        async for response in results_generator:
-            if hasattr(response, 'lines') and response.lines:
-                 last_response = response  # Keep the last response
-                 logger.info(f"Received {len(response.lines)} lines")
+        # We need to run feeding and consuming concurrently
+        # and ensure feeding completes so that it triggers the "None" signal
+        # which eventually terminates the results stream.
         
-        await feed_task
+        async def consume_results():
+            nonlocal last_response
+            async for response in results_generator:
+                if hasattr(response, 'lines') and response.lines:
+                     last_response = response  
+                     logger.info(f"Received {len(response.lines)} lines")
+                     for line in response.lines:
+                         # Debug logging
+                         if hasattr(line, 'translation'):
+                             logger.info(f"DEBUG: Line translation: {line.translation}")
+                         if hasattr(line, 'text'):
+                             logger.info(f"DEBUG: Line text: {line.text}")
+
+        # Run both tasks
+        # feed_task will finish when all audio is sent + None sentinel is sent.
+        # consume_results will finish when generator exhausts (after None sentinel triggers stop).
+        await asyncio.gather(feed_task, consume_results())
+        
+        # feed_task is awaited in gather above
+        
+        # Give a small buffer time for final processing after feed_audio sends None
+        # We need to make sure we consume the generator until it's actually done.
+        # The loop "async for response in results_generator" should naturally finish when generator closes.
+        # But feed_task finishes when it puts None into queue. 
+        # The generator might still yield a few results after that.
+        # The current code structure "await feed_task" happens *inside* the "await asyncio.gather" 
+        # structure usually, but here it is separate.
+        # Wait, the code has "async for ...:". This blocks until generator is done.
+        # feed_task runs in background.
+        # So "await feed_task" here is actually unreachable until the loop finishes!
+        # AND the loop finishes only when generator finishes.
+        # Generator finishes when audio_processor processes None.
+        
+        # Ah! The issue is:
+        # We start loop `async for response`.
+        # We start feed_task.
+        # feed_task feeds audio, then feeds None.
+        # audio_processor sees None, sets is_stopping, puts SENTINEL in queues.
+        # Processors finish.
+        # results_formatter sees stopping flag, finishes.
+        # Generator stops yielding.
+        # Loop finishes.
+        # THEN we await feed_task (which is already done).
+        
+        # So the flow is correct.
+        # However, "force final processing" might be needed if vac/buffers hold data.
+        # The audio_processor.process_audio(None) triggers expected shutdown.
+        
+        # But let's ensuring we capture the VERY LAST response which might contain the final buffered text.
+        pass
         
         # Use only the final response which has the complete transcript
         final_lines = []
@@ -167,8 +215,23 @@ async def upload_file(file: UploadFile = File(...)):
                     continue
                 seen_segments.add(segment_key)
                 
-            if hasattr(line, 'text') and line.text:
-                full_transcript += line.text + " "
+            # Check for translation first
+            text_part = ""
+            if hasattr(line, 'translation') and line.translation:
+                # translation might be a string or object depending on implementation
+                # Based on tokens_alignment fix, it's a string.
+                text_val = line.translation
+                if hasattr(text_val, 'text'): # safeguard if it remains an object
+                    text_part = text_val.text
+                else:
+                    text_part = str(text_val)
+            
+            # Fallback to original text if no translation
+            if not text_part and hasattr(line, 'text') and line.text:
+                text_part = line.text
+                
+            if text_part:
+                full_transcript += text_part + " "
         
         logger.info(f"Final transcript: {full_transcript[:100]}...")
         return {"transcript": full_transcript.strip()}

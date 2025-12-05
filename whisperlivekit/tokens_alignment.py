@@ -49,13 +49,24 @@ class TokensAlignment:
 
     def add_translation(self, segment: Segment) -> None:
         """Append translated text segments that overlap with a segment."""
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"DEBUG: Processing segment {segment.start}-{segment.end} text='{segment.text}'")
+        
+        found_overlap = False
         for ts in self.all_translation_segments:
             if ts.is_within(segment):
+                logger.info(f"DEBUG: Found overlap with translation: '{ts.text}'")
                 if segment.translation is None:
                     segment.translation = ""
                 segment.translation += ts.text + (self.sep if ts.text else '')
+                found_overlap = True
             elif segment.translation:
                 break
+        
+        if not found_overlap:
+             logger.info(f"DEBUG: No translation overlap found for segment starting at {segment.start}")
+
 
 
     def compute_punctuations_segments(self, tokens: Optional[List[ASRToken]] = None) -> List[PuncSegment]:
