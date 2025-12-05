@@ -621,7 +621,7 @@ class AudioProcessor:
             chunk_sample_end = chunk_sample_start + num_samples
 
             res = None
-            if self.args.vac:
+            if self.vac is not None:
                 res = self.vac(pcm_array)
 
             if res is not None:
