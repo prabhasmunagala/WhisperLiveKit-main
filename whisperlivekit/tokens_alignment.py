@@ -51,6 +51,8 @@ class TokensAlignment:
         """Append translated text segments that overlap with a segment."""
         for ts in self.all_translation_segments:
             if ts.is_within(segment):
+                if segment.translation is None:
+                    segment.translation = ""
                 segment.translation += ts.text + (self.sep if ts.text else '')
             elif segment.translation:
                 break
