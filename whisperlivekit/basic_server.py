@@ -134,38 +134,43 @@ async def upload_file(file: UploadFile = File(...)):
         feed_task = asyncio.create_task(feed_audio())
         
         full_transcript = ""
-        all_lines = []
+        seen_segments = set()  # Track unique segments by (start, end, text)
+        last_response = None
         logger.info("Starting to consume results...")
-        try:
-            async for response in results_generator:
-                logger.info(f"Response type: {type(response)}, Response: {response}")
-                if hasattr(response, 'lines') and response.lines:
-                     all_lines.extend(response.lines)
-                     logger.info(f"Received {len(response.lines)} transcript lines")
-                if hasattr(response, 'buffer_transcription') and response.buffer_transcription:
-                     logger.info(f"Buffer transcription: {response.buffer_transcription}")
-        except Exception as e:
-            logger.error(f"Error in results loop: {e}", exc_info=True)
+        
+        async for response in results_generator:
+            if hasattr(response, 'lines') and response.lines:
+                 last_response = response  # Keep the last response
+                 logger.info(f"Received {len(response.lines)} lines")
         
         await feed_task
-        logger.info(f"Feed task done. Total lines collected: {len(all_lines)}")
         
-        # Extract text from lines, skipping silent segments
-        for line in all_lines:
+        # Use only the final response which has the complete transcript
+        final_lines = []
+        if last_response and hasattr(last_response, 'lines'):
+            final_lines = last_response.lines
+        
+        logger.info(f"Total final lines: {len(final_lines)}")
+        
+        # Extract text from lines, skipping silent segments and duplicates
+        for line in final_lines:
             # Skip silent segments (speaker == -2)
-            if hasattr(line, 'is_silence') and line.is_silence():
+            if hasattr(line, 'is_silence') and callable(line.is_silence) and line.is_silence():
                 continue
             if hasattr(line, 'speaker') and line.speaker == -2:
                 continue
+            
+            # Create unique key for this segment
+            if hasattr(line, 'start') and hasattr(line, 'end') and hasattr(line, 'text'):
+                segment_key = (line.start, line.end, line.text)
+                if segment_key in seen_segments:
+                    continue
+                seen_segments.add(segment_key)
                 
-            if isinstance(line, str):
-                full_transcript += line + " "
-            elif hasattr(line, 'text') and line.text:
+            if hasattr(line, 'text') and line.text:
                 full_transcript += line.text + " "
-            else:
-                logger.warning(f"Skipping line with no text: {line}")
         
-        logger.info(f"Final transcript length: {len(full_transcript)}")
+        logger.info(f"Final transcript: {full_transcript[:100]}...")
         return {"transcript": full_transcript.strip()}
         
     except Exception as e:
