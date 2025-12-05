@@ -134,8 +134,8 @@ def parse_args():
         default="",
         dest="target_language",
         nargs="?",
-        const="eng_Latn",
-        help="Target language for translation. If set, translates using NLLB. 200 languages available. If you want to translate to english, you can also use --direct-english-translation. The STT model will try to directly output the translation.",
+        const="eng",
+        help="Target language for translation. If set, translates using NLLB. 200 languages available. If you want to translate to english, you can also use --direct-english-translation. The STT model will try to directly output the translation. Defaults to 'eng' if flag is present without value.",
     )    
 
     parser.add_argument(
