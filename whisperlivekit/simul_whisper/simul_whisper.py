@@ -455,10 +455,10 @@ class AlignAtt:
             # If we haven't detected start of speech, assume 0 for now to allow detection on buffer
             first_ts = self.state.first_timestamp if self.state.first_timestamp is not None else 0.0
             seconds_since_start = self.segments_len() - first_ts
-            if seconds_since_start >= 2.0:
+            if seconds_since_start >= 2.0 or is_last:
                 language_tokens, language_probs = self.lang_id(encoder_feature) 
                 top_lan, p = max(language_probs[0].items(), key=lambda x: x[1])
-                print(f"Detected language: {top_lan} with p={p:.4f}")
+                logger.info(f"Detected language: {top_lan} with p={p:.4f}")
                 self.create_tokenizer(top_lan)
                 self.state.last_attend_frame = -self.cfg.rewind_threshold
                 self.state.cumulative_time_offset = 0.0
@@ -514,8 +514,11 @@ class AlignAtt:
             if new_segment and self.tokenizer.no_speech is not None:
                 probs_at_sot = logits[:, self.state.sot_index, :].float().softmax(dim=-1)
                 no_speech_probs = probs_at_sot[:, self.tokenizer.no_speech].tolist()
+                probs_at_sot = logits[:, self.state.sot_index, :].float().softmax(dim=-1)
+                no_speech_probs = probs_at_sot[:, self.tokenizer.no_speech].tolist()
+                logger.info(f"DEBUG: No speech prob: {no_speech_probs[0]:.4f} vs threshold {self.cfg.nonspeech_prob}")
                 if no_speech_probs[0] > self.cfg.nonspeech_prob:
-                    logger.info("no speech, stop")
+                    logger.info(f"no speech detected (prob {no_speech_probs[0]:.4f} > {self.cfg.nonspeech_prob}), stopping decoding")
                     break
 
             logits = logits[:, -1, :]  # logits for the last token
@@ -572,7 +575,9 @@ class AlignAtt:
             if content_mel_len - most_attended_frame <= (4 if is_last else self.cfg.frame_threshold):
                 logger.debug(f"attention reaches the end: {most_attended_frame}/{content_mel_len}")
                 # stripping the last token, the one that is attended too close to the end
-                current_tokens = current_tokens[:, :-1]
+                # BUT if it is the last chunk, we want to keep it!
+                if not is_last:
+                    current_tokens = current_tokens[:, :-1]
                 break
         
             # debug print

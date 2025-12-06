@@ -449,7 +449,28 @@ class AudioProcessor:
                     self.last_response_content = response
                 
                 if self.is_stopping and self._processing_tasks_done():
-                    logger.info("Results formatter: All upstream processors are done and in stopping state. Terminating.")
+                    logger.info("Results formatter: All upstream processors are done. performing final update.")
+                    # Perform one final update to capture any flushed tokens
+                    self.tokens_alignment.update()
+                    lines, buffer_diarization_text, buffer_translation_text = self.tokens_alignment.get_lines(
+                        diarization=self.args.diarization,
+                        translation=bool(self.translation),
+                        current_silence=self.current_silence
+                    )
+                    state = await self.get_current_state()
+                    buffer_transcription_text = state.buffer_transcription.text if state.buffer_transcription else ''
+                    
+                    final_response = FrontData(
+                        status="active_transcription",
+                        lines=lines,
+                        buffer_transcription=buffer_transcription_text,
+                        buffer_diarization=buffer_diarization_text,
+                        buffer_translation=buffer_translation_text,
+                        remaining_time_transcription=state.remaining_time_transcription,
+                        remaining_time_diarization=state.remaining_time_diarization if self.args.diarization else 0
+                    )
+                    yield final_response
+                    logger.info("Results formatter: Terminating.")
                     return
                 
                 await asyncio.sleep(0.05)
@@ -625,6 +646,9 @@ class AudioProcessor:
             res = None
             if self.vac is not None:
                 res = self.vac(pcm_array)
+                if res is not None:
+                     logger.debug(f"VAD Result: {res}")
+
 
             if res is not None:
                 if "start" in res and self.current_silence:

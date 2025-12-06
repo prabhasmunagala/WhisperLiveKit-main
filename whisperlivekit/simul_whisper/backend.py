@@ -139,13 +139,17 @@ class SimulStreamingOnlineProcessor:
 
     def flush(self) -> Tuple[List[ASRToken], float]:
         """
-        Flush remaining buffer from the model.
+        Flush remaining buffer from the model by forcing a final inference pass.
         """
         try:
-            timestamped_words = self.model.flush()
+            logger.info("SimulStreaming flushing with is_last=True")
+            # Force final inference with is_last=True to capture any held-back unstable tokens
+            timestamped_words = self.model.infer(is_last=True)
+            
             if not timestamped_words:
                 return [], self.end
             
+            self.committed.extend(timestamped_words)
             return timestamped_words, self.end
         except Exception as e:
             logger.exception(f"SimulStreaming flush error: {e}")
@@ -220,6 +224,7 @@ class SimulStreamingASR():
                 init_prompt=self.init_prompt,
                 max_context_tokens=self.max_context_tokens,
                 static_init_prompt=self.static_init_prompt,
+                nonspeech_prob=self.nonspeech_prob,
         )  
         
         # Set up tokenizer for translation if needed

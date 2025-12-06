@@ -264,6 +264,14 @@ def parse_args():
         dest="cif_ckpt_path",
         help="The file path to the Simul-Whisper's CIF model checkpoint that detects whether there is end of word at the end of the chunk. If not, the last decoded space-separated word is truncated because it is often wrong -- transcribing a word in the middle. The CIF model adapted for the Whisper model version should be used. Find the models in https://github.com/backspacetg/simul_whisper/tree/main/cif_models . Note that there is no model for large-v3.",
     )
+
+    simulstreaming_group.add_argument(
+        "--nonspeech-prob",
+        type=float,
+        default=0.5,
+        dest="nonspeech_prob",
+        help="Probability threshold for no_speech token. If the model predicts no_speech with probability higher than this, the segment is considered silent.",
+    )
     
     simulstreaming_group.add_argument(
         "--never-fire",
