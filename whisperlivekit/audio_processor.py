@@ -384,8 +384,36 @@ class AudioProcessor:
         while True:
             try:
                 item = await get_all_from_queue(self.translation_queue)
+                
+                # Debug print only once
+                if not hasattr(self, '_translation_debug_printed'):
+                    import pprint
+                    logger.info(f"DEBUG: Translation Object Dict: {pprint.pformat(self.translation.__dict__)}")
+                    
+                    # Sanity Check
+                    try:
+                        from whisperlivekit.timed_objects import TimedText
+                        logger.info("DEBUG: Running NLLB Sanity Check (Telugu -> English)...")
+                        # "Hello" in Telugu
+                        sanity_input = TimedText(text="నమస్కారం", start=0.0, end=1.0, detected_language="tel_Telu")
+                        self.translation.insert_tokens([sanity_input])
+                        sanity_output, _ = await asyncio.to_thread(self.translation.process)
+                        logger.info(f"DEBUG: Sanity Check Output: '{sanity_output.text}'")
+                    except Exception as e:
+                        logger.error(f"DEBUG: Sanity Check Failed: {e}")
+                        
+                    self._translation_debug_printed = True
+
                 if item is SENTINEL:
                     logger.debug("Translation processor received sentinel. Finishing.")
+                    # Attempt to flush any remaining buffer in translation model
+                    if hasattr(self.translation, 'flush'):
+                         new_translation, new_translation_buffer = self.translation.flush()
+                         if new_translation:
+                             async with self.lock:
+                                self.state.new_translation.append(new_translation)
+                                self.state.new_translation_buffer = new_translation_buffer
+                             logger.info(f"DEBUG: Flushed translation: {new_translation}")
                     break
                 elif type(item) is Silence:
                     if item.is_starting:
@@ -397,10 +425,114 @@ class AudioProcessor:
                     new_translation, new_translation_buffer = self.translation.validate_buffer_and_reset()
                     pass
                 else:
-                    logger.info(f"DEBUG: Translation processor received token: {item} with keys {item.__dict__ if hasattr(item, '__dict__') else 'no dict'}")
-                    self.translation.insert_tokens(item)
-                    new_translation, new_translation_buffer = await asyncio.to_thread(self.translation.process)
-                    logger.info(f"DEBUG: Translation input tokens: {[t.text for t in item] if isinstance(item, list) else item.text}. Output: {new_translation}")
+                    # Fix: Aggregate tokens into a single TimedText object with timestamps.
+                    # This ensures NLLB gets a coherent string AND preserves time range for alignment.
+                    
+                    # 1. Extract text and timestamps
+                    text_parts = []
+                    start_time = None
+                    end_time = None
+                    
+                    # Helper to process single item
+                    def process_item(t):
+                        nonlocal start_time, end_time
+                        if hasattr(t, 'text') and t.text:
+                            text_parts.append(t.text)
+                            if hasattr(t, 'start') and t.start is not None:
+                                if start_time is None or t.start < start_time:
+                                    start_time = t.start
+                            if hasattr(t, 'end') and t.end is not None:
+                                if end_time is None or t.end > end_time:
+                                    end_time = t.end
+                    
+                    if isinstance(item, list):
+                        for t in item:
+                            process_item(t)
+                    else:
+                        process_item(item)
+                        
+                    joined_text = "".join(text_parts).strip()
+                    
+                    if joined_text and start_time is not None and end_time is not None:
+                        # Create a provisional object that mimics ASRToken/TimedText
+                        # We use ASRToken as it is standard, but simple class works too if duck-typed
+                        from whisperlivekit.timed_objects import TimedText
+                        aggregated_token = TimedText(
+                            text=joined_text,
+                            start=start_time,
+                            end=end_time,
+                            detected_language=self.args.lan # Pass the configured source language (e.g. 'tel_Telu')
+                        )
+                        
+                        logger.info(f"DEBUG: Processing aggregated translation input: '{joined_text}' ({start_time}-{end_time}) Language: {self.args.lan}")
+                        
+                        # Direct Translation Bypass (OnlineTranslation wrapper buffering fix)
+                        new_translation_text = ""
+                        try:
+                            # Access internal components
+                            # self.translation is OnlineTranslation
+                            # .translation_model is the inner generic model wrapper
+                            # .translator is the raw HF model (if transformers backend)
+                            
+                            tm = self.translation.translation_model
+                            raw_model = tm.translator 
+                            
+                            # Get tokenizer (tricky if key varies, but debug showed keys are NLLB codes)
+                            # self.args.lan should be 'tel_Telu' by now
+                            tokenizer = tm.tokenizer.get(self.args.lan)
+                            if not tokenizer:
+                                tokenizer = tm.get_tokenizer(self.args.lan)
+                                
+                            if raw_model and tokenizer:
+                                 import torch
+                                 
+                                 # Prepare Input
+                                 inputs = tokenizer(joined_text, return_tensors="pt")
+                                 device = tm.device
+                                 inputs = {k: v.to(device) for k, v in inputs.items()}
+                                 
+                                 # Determine Target Language ID
+                                 tgt_lang = self.args.target_language # should be 'eng_Latn'
+                                 forced_bos_token_id = tokenizer.convert_tokens_to_ids(tgt_lang)
+                                 
+                                 # Generate
+                                 with torch.no_grad():
+                                     generated_tokens = raw_model.generate(
+                                         **inputs,
+                                         forced_bos_token_id=forced_bos_token_id,
+                                         max_length=200 # reasonable limit
+                                     )
+                                 
+                                 # Decode
+                                 new_translation_text = tokenizer.batch_decode(generated_tokens, skip_special_tokens=True)[0]
+                                 logger.info(f"DEBUG: Direct Translation Result: '{new_translation_text}'")
+                            else:
+                                logger.error("DEBUG: Could not retrieve raw model/tokenizer for direct translation.")
+                                
+                        except Exception as e:
+                            logger.error(f"DEBUG: Direct translation failed: {e}")
+                            import traceback
+                            logger.error(traceback.format_exc())
+
+                        # Create result object
+                        from whisperlivekit.timed_objects import TimedText
+                        new_translation = TimedText(
+                            text=new_translation_text,
+                            start=start_time,
+                            end=end_time,
+                            detected_language=self.args.target_language
+                        )
+                        new_translation_buffer = TimedText() # Empty buffer since we processed everything
+
+                        # DEBUG: If translation is empty, inject a dummy value
+                        if not new_translation.text:
+                             new_translation.text = "[Translation Failed]"
+                             logger.info("DEBUG: Injected [Translation Failed] marker (Direct translation empty)")
+
+                    else:
+                        logger.info(f"DEBUG: Skipped translation input (text='{joined_text}', start={start_time}, end={end_time})")
+                        continue
+                        
                 async with self.lock:
                     self.state.new_translation.append(new_translation)
                     self.state.new_translation_buffer = new_translation_buffer

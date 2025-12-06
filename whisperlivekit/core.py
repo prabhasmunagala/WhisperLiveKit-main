@@ -157,9 +157,13 @@ class TranscriptionEngine:
         
         self.translation_model = None
         if self.args.target_language:
-            # Map common English codes to NLLB's eng_Latn
+            # Map common codes to NLLB's codes
             if self.args.target_language in ["eng", "en"]:
                 self.args.target_language = "eng_Latn"
+            
+            # Map source language 'te' to 'tel_Telu' for NLLB
+            if self.args.lan == 'te':
+                self.args.lan = 'tel_Telu'
                 
             if self.args.lan == 'auto' and backend_policy != "simulstreaming":
                 raise Exception('Translation cannot be set with language auto when transcription backend is not simulstreaming')

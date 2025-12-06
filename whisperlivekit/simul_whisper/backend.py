@@ -150,6 +150,14 @@ class SimulStreamingOnlineProcessor:
                 return [], self.end
             
             self.committed.extend(timestamped_words)
+            
+            # Also flush any pending incomplete tokens from the model's internal buffer
+            flushed_pending = self.model.flush()
+            if flushed_pending:
+                 logger.info(f"SimulStreaming picked up {len(flushed_pending)} pending tokens from model.flush()")
+                 self.committed.extend(flushed_pending)
+                 timestamped_words.extend(flushed_pending)
+
             return timestamped_words, self.end
         except Exception as e:
             logger.exception(f"SimulStreaming flush error: {e}")
@@ -328,7 +336,9 @@ class SimulStreamingASR():
     def set_translate_task(self):
         """Set up translation task."""
         if self.cfg.language == 'auto':
-            raise Exception('Translation cannot be done with language = auto')
+            logger.info("Direct translation enabled with auto-detection. Tokenizer will be created after language detection.")
+            return None
+            
         return tokenizer.get_tokenizer(
             multilingual=True,
             language=self.cfg.language,

@@ -222,6 +222,11 @@ class AlignAtt:
             device=self.model.device).unsqueeze(0)
         self.state.initial_token_length = self.state.initial_tokens.shape[1]
         self.state.sot_index = self.tokenizer.sot_sequence.index(self.tokenizer.sot)
+        
+        # Log the actual tokens being used for SOT to confirm translation task
+        decoded_sot = self.tokenizer.decode(list(self.tokenizer.sot_sequence_including_notimestamps))
+        logger.info(f"DEBUG: Initial SOT Sequence Decoded: {decoded_sot}")
+        
         logger.debug(f"init tokens after, {len(self.state.segments)}")
         self.state.tokens = [self.state.initial_tokens]
 
@@ -389,7 +394,8 @@ class AlignAtt:
         if len(self.state.segments) == 0:
             logger.debug("No segments, nothing to do")
             return []
-        if not self._apply_minseglen():
+        
+        if not is_last and not self._apply_minseglen():
             logger.debug(f"applied minseglen {self.cfg.audio_min_len} > {self.segments_len()}.")
             input_segments = torch.cat(self.state.segments, dim=0)
             return []
@@ -652,7 +658,7 @@ class AlignAtt:
         # Hold incomplete tokens for next chunk (with limit to prevent hallucination accumulation)
         self.state.pending_incomplete_tokens = []
         MAX_PENDING_TOKENS = 10  # Real incomplete UTF-8 chars are at most a few tokens
-        if split_words and replacement_char in split_words[-1]:
+        if not is_last and split_words and replacement_char in split_words[-1]:
             if len(split_tokens[-1]) <= MAX_PENDING_TOKENS:
                 self.state.pending_incomplete_tokens = split_tokens[-1]
                 logger.debug(f"[UTF-8 Fix] Holding {len(self.state.pending_incomplete_tokens)} incomplete tokens for next chunk")

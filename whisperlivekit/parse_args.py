@@ -338,5 +338,10 @@ def parse_args():
         args.backend_policy = "simulstreaming"
     elif args.backend_policy == "2":
         args.backend_policy = "localagreement"
+        
+    # Auto-enable translation for Telugu if not specified
+    if args.lan == "te" and not args.target_language:
+        print("INFO: Auto-enabling English translation for Telugu input.")
+        args.target_language = "eng"
     
     return args

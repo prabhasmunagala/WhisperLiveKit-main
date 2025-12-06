@@ -73,7 +73,9 @@ class TokensAlignment:
                 if segment.translation:
                     segment.translation += self.sep
                 segment.translation += translation_block.text
-                logger.debug(f"DEBUG: Added translation '{translation_block.text}' to segment {segment.start}-{segment.end}")
+                logger.debug(f"DEBUG: ADDED translation '{translation_block.text}' to segment {segment.start}-{segment.end}")
+            else:
+                logger.debug(f"DEBUG: No overlap. Seg: {segment.start}-{segment.end} vs Trans: {translation_block.start}-{translation_block.end}")
 
 
 
