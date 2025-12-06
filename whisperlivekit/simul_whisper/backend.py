@@ -219,13 +219,14 @@ class SimulStreamingASR():
                 cif_ckpt_path=self.cif_ckpt_path,
                 decoder_type="beam",
                 beam_size=self.beams,
-                task=self.direct_english_translation,
+                task="translate" if self.direct_english_translation else "transcribe",
                 never_fire=self.never_fire,
                 init_prompt=self.init_prompt,
                 max_context_tokens=self.max_context_tokens,
                 static_init_prompt=self.static_init_prompt,
                 nonspeech_prob=self.nonspeech_prob,
         )  
+        logger.info(f"DEBUG: SimulStreamingASR initialized with language={self.lan}, cfg.language={self.cfg.language}")
         
         # Set up tokenizer for translation if needed
         if self.direct_english_translation:

@@ -400,7 +400,7 @@ class AudioProcessor:
                     logger.info(f"DEBUG: Translation processor received token: {item} with keys {item.__dict__ if hasattr(item, '__dict__') else 'no dict'}")
                     self.translation.insert_tokens(item)
                     new_translation, new_translation_buffer = await asyncio.to_thread(self.translation.process)
-                    logger.info(f"DEBUG: Translation process result: {new_translation}")
+                    logger.info(f"DEBUG: Translation input tokens: {[t.text for t in item] if isinstance(item, list) else item.text}. Output: {new_translation}")
                 async with self.lock:
                     self.state.new_translation.append(new_translation)
                     self.state.new_translation_buffer = new_translation_buffer

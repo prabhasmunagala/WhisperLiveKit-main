@@ -201,6 +201,7 @@ class AlignAtt:
             task=self.decode_options.task
         )
         self.state.tokenizer = self.tokenizer
+        logger.info(f"DEBUG: Tokenizer created for language={self.tokenizer.language}, task={self.tokenizer.task}")
 
     def init_context(self):
         kw = {'tokenizer': self.tokenizer, 

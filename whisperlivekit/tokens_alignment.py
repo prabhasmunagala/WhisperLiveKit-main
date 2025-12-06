@@ -67,11 +67,13 @@ class TokensAlignment:
             
             if overlap_end > overlap_start:  # There is overlap
                 # Add the translation text from this block
-                if hasattr(translation_block, 'text') and translation_block.text:
-                    if segment.translation:
-                        segment.translation += self.sep
-                    segment.translation += translation_block.text
-                    logger.info(f"DEBUG: Added translation '{translation_block.text}' to segment {segment.start}-{segment.end}")
+                if not hasattr(translation_block, 'text') or not translation_block.text:
+                    continue
+
+                if segment.translation:
+                    segment.translation += self.sep
+                segment.translation += translation_block.text
+                logger.debug(f"DEBUG: Added translation '{translation_block.text}' to segment {segment.start}-{segment.end}")
 
 
 
