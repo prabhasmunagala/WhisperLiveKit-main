@@ -125,17 +125,7 @@ def parse_args():
         "--direct-english-translation",
         action="store_true",
         default=False,
-        help="Use Whisper to directly translate to english.",
-    )
-    
-    parser.add_argument(
-        "--target-language",
-        type=str,
-        default="",
-        dest="target_language",
-        nargs="?",
-        const="eng",
-        help="Target language for translation. If set, translates using NLLB. 200 languages available. If you want to translate to english, you can also use --direct-english-translation. The STT model will try to directly output the translation. Defaults to 'eng' if flag is present without value.",
+        help="Use Whisper to directly translate to English. Requires PyTorch backend with LocalAgreement policy.",
     )    
 
     parser.add_argument(
@@ -312,20 +302,7 @@ def parse_args():
         dest="model_path",
         help="Direct path to the SimulStreaming Whisper .pt model file. Overrides --model for SimulStreaming backend.",
     )
-    
-    simulstreaming_group.add_argument(
-        "--nllb-backend",
-        type=str,
-        default="transformers",
-        help="transformers or ctranslate2",
-    )
-    
-    simulstreaming_group.add_argument(
-        "--nllb-size",
-        type=str,
-        default="600M",
-        help="600M or 1.3B",
-    )
+
 
     args = parser.parse_args()
     
@@ -339,9 +316,13 @@ def parse_args():
     elif args.backend_policy == "2":
         args.backend_policy = "localagreement"
         
-    # Auto-enable translation for Telugu if not specified
-    if args.lan == "te" and not args.target_language:
-        print("INFO: Auto-enabling English translation for Telugu input.")
-        args.target_language = "eng"
-    
+    # Auto-switch to localagreement + whisper (PyTorch) for direct translation
+    if args.direct_english_translation:
+        if args.backend_policy == "simulstreaming":
+            print("INFO: Switching backend policy to 'localagreement' for accurate direct translation.")
+            args.backend_policy = "localagreement"
+        if args.backend in ["auto", "faster-whisper"]:
+            print("INFO: Switching backend to 'whisper' (PyTorch) for direct translation (required for accuracy).")
+            args.backend = "whisper"
+
     return args

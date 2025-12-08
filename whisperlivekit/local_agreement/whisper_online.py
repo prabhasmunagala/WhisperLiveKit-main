@@ -155,6 +155,10 @@ def backend_factory(
     else:
         tokenizer = None
     
+    # Set task before warmup so that warmup uses correct settings
+    if direct_english_translation:
+        asr.transcribe_kargs["task"] = "translate"
+    
     warmup_asr(asr, warmup_file)
     
     asr.confidence_validation = confidence_validation
@@ -162,6 +166,7 @@ def backend_factory(
     asr.buffer_trimming = buffer_trimming
     asr.buffer_trimming_sec = buffer_trimming_sec
     asr.backend_choice = backend_choice
+        
     return asr
 
 

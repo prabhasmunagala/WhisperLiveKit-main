@@ -155,29 +155,6 @@ class TranscriptionEngine:
                     SortformerDiarization
                 self.diarization_model = SortformerDiarization()
         
-        self.translation_model = None
-        if self.args.target_language:
-            # Map common codes to NLLB's codes
-            if self.args.target_language in ["eng", "en"]:
-                self.args.target_language = "eng_Latn"
-            
-            # Map source language 'te' to 'tel_Telu' for NLLB
-            if self.args.lan == 'te':
-                self.args.lan = 'tel_Telu'
-                
-            if self.args.lan == 'auto' and backend_policy != "simulstreaming":
-                raise Exception('Translation cannot be set with language auto when transcription backend is not simulstreaming')
-            else:
-                try:
-                    from nllw import load_model
-                except:
-                    raise Exception('To use translation, you must install nllw: `pip install nllw`')
-                translation_params = { 
-                    "nllb_backend": "transformers",
-                    "nllb_size": "600M"
-                }
-                translation_params = update_with_kwargs(translation_params, kwargs)
-                self.translation_model = load_model([self.args.lan], **translation_params) #in the future we want to handle different languages for different speakers
         TranscriptionEngine._initialized = True
 
 
@@ -201,10 +178,3 @@ def online_diarization_factory(args, diarization_backend):
         online = SortformerDiarizationOnline(shared_model=diarization_backend)
     return online
 
-
-def online_translation_factory(args, translation_model):
-    #should be at speaker level in the future:
-    #one shared nllb model for all speaker
-    #one tokenizer per speaker/language
-    from nllw import OnlineTranslation
-    return OnlineTranslation(translation_model, [args.lan], [args.target_language])

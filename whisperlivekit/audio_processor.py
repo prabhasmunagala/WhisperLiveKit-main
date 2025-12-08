@@ -7,8 +7,7 @@ from typing import Any, AsyncGenerator, List, Optional, Union
 import numpy as np
 
 from whisperlivekit.core import (TranscriptionEngine,
-                                 online_diarization_factory, online_factory,
-                                 online_translation_factory)
+                                 online_diarization_factory, online_factory)
 from whisperlivekit.ffmpeg_manager import FFmpegManager, FFmpegState
 from whisperlivekit.silero_vad_iterator import FixedVADIterator
 from whisperlivekit.timed_objects import (ASRToken, ChangeSpeaker, FrontData,
@@ -125,8 +124,6 @@ class AudioProcessor:
             self.sep = self.transcription.asr.sep   
         if self.args.diarization:
             self.diarization = online_diarization_factory(self.args, models.diarization_model)
-        if models.translation_model:
-            self.translation = online_translation_factory(self.args, models.translation_model)
 
     async def _push_silence_event(self) -> None:
         if self.transcription_queue:
