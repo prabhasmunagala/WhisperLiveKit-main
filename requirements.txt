@@ -1,0 +1,37 @@
+# WhisperLiveKit Requirements
+# Core dependencies
+fastapi
+uvicorn
+websockets
+
+# Audio processing
+librosa
+soundfile
+torchaudio>=2.0.0
+
+# Machine Learning
+torch>=2.0.0
+huggingface-hub>=0.25.0
+tqdm
+tiktoken
+
+# Whisper backends (install one or more)
+# For faster-whisper (recommended for transcription, not for translation):
+faster-whisper
+
+# For native PyTorch Whisper (required for direct translation):
+openai-whisper
+
+# For MLX Whisper (Apple Silicon only):
+# mlx-whisper
+
+# Linux only - Triton for optimizations
+# triton>=2.0.0
+
+# Optional: Diarization support
+# pyannote.audio
+# nemo-toolkit[asr]
+
+# Optional: Sentence tokenization
+# mosestokenizer
+# wtpsplit
