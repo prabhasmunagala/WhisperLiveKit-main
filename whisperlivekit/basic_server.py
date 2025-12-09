@@ -60,6 +60,7 @@ async def upload_file(file: UploadFile = File(...)):
     
     import tempfile
     import os
+    import numpy as np
     
     # Save uploaded file to temp file
     with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1]) as tmp:
@@ -71,9 +72,11 @@ async def upload_file(file: UploadFile = File(...)):
     
     try:
         # Decode to PCM using FFmpeg
-        logger.info("Decoding to PCM...")
+        logger.info(f"Decoding audio file...")
+        import imageio_ffmpeg
+        ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
         cmd = [
-            "ffmpeg",
+            ffmpeg_path,
             "-hide_banner",
             "-loglevel", "error",
             "-i", tmp_path,
@@ -97,189 +100,67 @@ async def upload_file(file: UploadFile = File(...)):
             return {"error": "FFmpeg decoding failed"}
             
         pcm_data = stdout
-        logger.info(f"Decoded PCM data size: {len(pcm_data)} bytes")
+        logger.info(f"Decoded PCM data: {len(pcm_data)} bytes")
         
-        # Create AudioProcessor with PCM input forced
-        # We need to hack this a bit since AudioProcessor reads from transcription_engine.args
-        # We can subclass or just modify the instance
+        # Convert PCM bytes to float32 numpy array
+        audio = np.frombuffer(pcm_data, dtype=np.int16).astype(np.float32) / 32768.0
+        logger.info(f"Converted to audio array: shape={audio.shape}, dtype={audio.dtype}")
         
-        audio_processor = AudioProcessor(
-            transcription_engine=transcription_engine,
+        # Use direct Whisper transcription (works better for translation than streaming)
+        logger.info("Starting transcription...")
+        from whisperlivekit.whisper import transcribe
+        
+        # Get transcription options from the engine
+        task = "translate" if transcription_engine.args.direct_english_translation else "transcribe"
+        
+        logger.info(f"DEBUG: direct_english_translation={transcription_engine.args.direct_english_translation}")
+        logger.info(f"Starting language detection and {task}...")
+        
+        # For translation to work reliably, we need to detect language first
+        # then pass it explicitly to the transcribe function
+        if task == "translate":
+            # Detect language first
+            from whisperlivekit.whisper.audio import log_mel_spectrogram, pad_or_trim, N_FRAMES
+            import torch
+            
+            mel = log_mel_spectrogram(audio, transcription_engine.asr.model.dims.n_mels)
+            mel_segment = pad_or_trim(mel, N_FRAMES).to(transcription_engine.asr.model.device)
+            _, probs = transcription_engine.asr.model.detect_language(mel_segment)
+            detected_language = max(probs, key=probs.get)
+            
+            logger.info(f"Detected language: {detected_language}, translating to English")
+            language = detected_language
+        else:
+            # For transcription, auto-detect is fine
+            language = None
+            logger.info(f"Transcribing with language=auto-detect")
+        
+        # Run transcription in thread pool to avoid blocking
+        result = await asyncio.to_thread(
+            transcribe,
+            transcription_engine.asr.model,
+            audio,
+            language=language,
+            task=task,
+            word_timestamps=True,
+            verbose=False,
+            temperature=0.0,  # Deterministic output, no randomness
+            beam_size=5,  # Use beam search for better quality
+            best_of=5,  # Try 5 candidates and pick the best
         )
-        # Force PCM input mode
-        audio_processor.is_pcm_input = True
-        # Ensure ffmpeg_manager is not used/started
-        audio_processor.ffmpeg_manager = None
-        # Disable VAD for upload mode to ensure all audio is processed
-        audio_processor.vac = None
-        logger.info("VAD disabled for upload mode to ensure complete processing")
         
-        results_generator = await audio_processor.create_tasks()
+        full_transcript = result.get("text", "").strip()
+        logger.info(f"Transcription complete: {len(full_transcript)} characters")
+        logger.info(f"Detected language: {result.get('language', 'N/A')}")
+        logger.info(f"Number of segments: {len(result.get('segments', []))}")
         
-        # Feed audio task
-        async def feed_audio():
-            chunk_size = 64 * 1024 
-            total_size = len(pcm_data)
-            processed = 0
-            logger.info("Starting to feed PCM audio...")
-            
-            for i in range(0, total_size, chunk_size):
-                chunk = pcm_data[i:i+chunk_size]
-                await audio_processor.process_audio(chunk)
-                processed += len(chunk)
-                if i % (chunk_size * 100) == 0:
-                     logger.info(f"Fed {processed}/{total_size} bytes")
-                await asyncio.sleep(0)
-                
-            logger.info("Finished feeding audio. Signaling end of stream.")
-            await audio_processor.process_audio(None)
-            
-        feed_task = asyncio.create_task(feed_audio())
-        
-        full_transcript = ""
-        seen_segments = set()  # Track unique segments by (start, end, text)
-        last_response = None
-        logger.info("Starting to consume results...")
-        
-        # We need to run feeding and consuming concurrently
-        # and ensure feeding completes so that it triggers the "None" signal
-        # which eventually terminates the results stream.
-        
-        async def consume_results():
-            nonlocal last_response
-            async for response in results_generator:
-                if hasattr(response, 'lines') and response.lines:
-                     last_response = response  
-                     logger.info(f"Received {len(response.lines)} lines")
-                     for line in response.lines:
-                         # Debug logging
-                         if hasattr(line, 'translation'):
-                             logger.info(f"DEBUG: Line translation: {line.translation}")
-                         if hasattr(line, 'text'):
-                             logger.info(f"DEBUG: Line text: {line.text}")
-                         logger.info(f"DEBUG: Line attributes: {dir(line)}")
-
-        # Run both tasks
-        # feed_task will finish when all audio is sent + None sentinel is sent.
-        # consume_results will finish when generator exhausts (after None sentinel triggers stop).
-        await asyncio.gather(feed_task, consume_results())
-        
-        # feed_task is awaited in gather above
-        
-        # Give a small buffer time for final processing after feed_audio sends None
-        # We need to make sure we consume the generator until it's actually done.
-        # The loop "async for response in results_generator" should naturally finish when generator closes.
-        # But feed_task finishes when it puts None into queue. 
-        # The generator might still yield a few results after that.
-        # The current code structure "await feed_task" happens *inside* the "await asyncio.gather" 
-        # structure usually, but here it is separate.
-        # Wait, the code has "async for ...:". This blocks until generator is done.
-        # feed_task runs in background.
-        # So "await feed_task" here is actually unreachable until the loop finishes!
-        # AND the loop finishes only when generator finishes.
-        # Generator finishes when audio_processor processes None.
-        
-        # Ah! The issue is:
-        # We start loop `async for response`.
-        # We start feed_task.
-        # feed_task feeds audio, then feeds None.
-        # audio_processor sees None, sets is_stopping, puts SENTINEL in queues.
-        # Processors finish.
-        # results_formatter sees stopping flag, finishes.
-        # Generator stops yielding.
-        # Loop finishes.
-        # THEN we await feed_task (which is already done).
-        
-        # So the flow is correct.
-        # However, "force final processing" might be needed if vac/buffers hold data.
-        # The audio_processor.process_audio(None) triggers expected shutdown.
-        
-        # But let's ensuring we capture the VERY LAST response which might contain the final buffered text.
-        pass
-        
-        # Use only the final response which has the complete transcript
-        final_lines = []
-        if last_response and hasattr(last_response, 'lines'):
-            final_lines = last_response.lines
-        
-        logger.info(f"Total final lines: {len(final_lines)}")
-        
-        # Extract text from lines, skipping silent segments and duplicates
-        unique_translation_texts = set()
-        
-        # Extract text from lines, skipping silent segments and duplicates
-        for line in final_lines:
-            # Skip silent segments (speaker == -2)
-            if hasattr(line, 'is_silence') and callable(line.is_silence) and line.is_silence():
-                continue
-            if hasattr(line, 'speaker') and line.speaker == -2:
-                continue
-            
-            # Create unique key for this segment
-            # Note: We rely on text deduplication logic here.
-            
-            # Check for translation first
-            text_part = ""
-            if hasattr(line, 'translation') and line.translation:
-                # translation might be a string or object depending on implementation
-                # Based on tokens_alignment fix, it's a string.
-                text_val = line.translation
-                if hasattr(text_val, 'text'): # safeguard if it remains an object
-                    text_part = text_val.text
-                else:
-                    text_part = str(text_val)
-                    
-            if text_part:
-                 if text_part not in unique_translation_texts:
-                      full_transcript += text_part + " "
-                      unique_translation_texts.add(text_part)
-                 # If we have translation, we skip the original text fallback 
-                 # to ensure we only output English as requested.
-            else:
-                # Fallback to original text if no translation AND we haven't found any translation yet?
-                # The user wants ONLY English.
-                # If we mix Telugu and English, it's bad.
-                # But if translation failed completely, maybe outputting Telugu is better than nothing?
-                # User said: "transcript in english right?"
-                
-                # Let's verify if we have ANY translation in the whole response
-                pass
-                
-        # If full_transcript is empty (meaning no aligned translations found),
-        # let's look at the raw translation buffer or segments directly from audio_processor?
-        # Accessing private state is hacky but we need to see if data exists.
-        
-        if not full_transcript.strip():
-             logger.warning("No aligned translation found. Checking raw buffer...")
-             # Try to get translation from lines ignoring detailed alignment
-             for line in final_lines:
-                 # Debug again
-                 if hasattr(line, 'translation'):
-                      logger.info(f"DEBUG: Line has translation attr: {line.translation}")
-             
-             # Double fallback: if we really have no translation, check buffer_translation from response
-             if last_response and hasattr(last_response, 'buffer_translation') and last_response.buffer_translation:
-                 full_transcript = last_response.buffer_translation
-                 logger.info(f"Fallback to buffer_translation: {full_transcript}")
-
-             # Triple fallback: Just give the Telugu text so they see SOMETIMES.
-             # But user complained about seeing Telugu.
-             if not full_transcript.strip():
-                 logger.warning("No translation available at all. Returning original text.")
-                 for line in final_lines:
-                     if hasattr(line, 'text') and line.text:
-                         full_transcript += line.text + " "
-        
-        logger.info(f"Final transcript: {full_transcript[:100]}...")
-        return {"transcript": full_transcript.strip()}
+        return {"transcript": full_transcript}
         
     except Exception as e:
-        logger.error(f"Unexpected error in upload_file: {e}")
+        logger.error(f"Unexpected error in upload_file: {e}", exc_info=True)
         raise e
     finally:
         logger.info("Cleaning up resources...")
-        if 'audio_processor' in locals():
-            await audio_processor.cleanup()
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
         logger.info("Cleanup done.")

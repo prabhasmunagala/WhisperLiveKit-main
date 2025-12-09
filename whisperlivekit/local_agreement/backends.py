@@ -72,6 +72,9 @@ class WhisperASR(ASRBase):
         options.pop("vad_filter", None)
         language = self.original_language if self.original_language else None
 
+        logger.debug(f"WhisperASR.transcribe: audio shape={audio.shape if hasattr(audio, 'shape') else 'N/A'}, "
+                     f"audio type={type(audio)}, language={language}, options={options}")
+
         result = whisper_transcribe(
             self.model,
             audio,
@@ -81,6 +84,13 @@ class WhisperASR(ASRBase):
             word_timestamps=True,
             **options,
         )
+        
+        logger.debug(f"WhisperASR.transcribe: result has {len(result.get('segments', []))} segments, "
+                     f"text length={len(result.get('text', ''))}")
+        if result.get('segments'):
+            for i, seg in enumerate(result['segments'][:3]):  # Log first 3 segments
+                logger.debug(f"  Segment {i}: text='{seg.get('text', '')[:50]}...', words={len(seg.get('words', []))}")
+        
         return result
 
     def ts_words(self, r) -> List[ASRToken]:
@@ -94,7 +104,6 @@ class WhisperASR(ASRBase):
                     word["start"],
                     word["end"],
                     word["word"],
-                    probability=word.get("probability"),
                 )
                 tokens.append(token)
         return tokens
@@ -151,7 +160,7 @@ class FasterWhisperASR(ASRBase):
             if segment.no_speech_prob > 0.9:
                 continue
             for word in segment.words:
-                token = ASRToken(word.start, word.end, word.word, probability=word.probability)
+                token = ASRToken(word.start, word.end, word.word)
                 tokens.append(token)
         return tokens
 
