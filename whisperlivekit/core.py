@@ -89,6 +89,17 @@ class TranscriptionEngine:
             self.vac_model = load_silero_vad(onnx=use_onnx)
         
         backend_policy = self.args.backend_policy
+        
+        # Auto-switch to LocalAgreement when using Transformers backend
+        # SimulStreaming doesn't support HuggingFace Transformers models
+        if self.args.backend == "transformers" and backend_policy == "simulstreaming":
+            logger.warning(
+                "Transformers backend is not compatible with SimulStreaming policy. "
+                "Automatically switching to LocalAgreement policy for streaming support."
+            )
+            backend_policy = "localagreement"
+            self.args.backend_policy = "localagreement"
+        
         if self.args.transcription:
             if backend_policy == "simulstreaming":                 
                 simulstreaming_params = {

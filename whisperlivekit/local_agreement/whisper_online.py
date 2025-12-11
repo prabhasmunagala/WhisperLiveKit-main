@@ -13,7 +13,7 @@ from whisperlivekit.backend_support import (faster_backend_available,
 from whisperlivekit.model_paths import detect_model_format, resolve_model_path
 from whisperlivekit.warmup import warmup_asr
 
-from .backends import FasterWhisperASR, MLXWhisper, OpenaiApiASR, WhisperASR
+from .backends import FasterWhisperASR, MLXWhisper, OpenaiApiASR, WhisperASR, TransformersASR, TRANSFORMERS_AVAILABLE
 
 logger = logging.getLogger(__name__)
 
@@ -124,6 +124,9 @@ def backend_factory(
             if resolved_root is not None and not resolved_root.is_dir():
                 raise ValueError("MLX Whisper backend expects a directory containing MLX weights.")
             model_override = str(resolved_root) if resolved_root is not None else None
+        elif backend_choice == "transformers":
+            asr_cls = TransformersASR
+            model_override = str(resolved_root) if resolved_root is not None else None
         else:
             asr_cls = WhisperASR
             model_override = str(resolved_root) if resolved_root is not None else None
@@ -159,7 +162,9 @@ def backend_factory(
     if direct_english_translation:
         asr.transcribe_kargs["task"] = "translate"
     
-    warmup_asr(asr, warmup_file)
+    # Skip warmup for transformers backend to save memory/startup time
+    if backend_choice != "transformers":
+        warmup_asr(asr, warmup_file)
     
     asr.confidence_validation = confidence_validation
     asr.tokenizer = tokenizer
@@ -203,6 +208,11 @@ def _normalize_backend_choice(
             raise FileNotFoundError(
                 f"faster-whisper backend requested but no Faster-Whisper weights were found under {resolved_root}"
             )
+        return backend_choice
+
+    if backend_choice == "transformers":
+        if not TRANSFORMERS_AVAILABLE:
+            raise RuntimeError("transformers backend requested but transformers library is not installed.")
         return backend_choice
 
     if backend_choice == "whisper":

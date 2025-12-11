@@ -9,7 +9,15 @@ import soundfile as sf
 
 from whisperlivekit.model_paths import detect_model_format, resolve_model_path
 from whisperlivekit.timed_objects import ASRToken
+from whisperlivekit.model_paths import detect_model_format, resolve_model_path
+from whisperlivekit.timed_objects import ASRToken
 from whisperlivekit.whisper.transcribe import transcribe as whisper_transcribe
+
+try:
+    from transformers import pipeline
+    TRANSFORMERS_AVAILABLE = True
+except ImportError:
+    TRANSFORMERS_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 class ASRBase:
@@ -310,3 +318,147 @@ class OpenaiApiASR(ASRBase):
 
     def use_vad(self):
         self.use_vad_opt = True
+
+
+class TransformersASR(ASRBase):
+    """Uses Hugging Face Transformers pipeline as the backend."""
+    sep = " "
+
+    def load_model(self, model_size=None, cache_dir=None, model_dir=None):
+        if not TRANSFORMERS_AVAILABLE:
+            raise ImportError("Transformers library is not available. Please install 'transformers' and 'torch'.")
+            
+        import torch
+        import warnings
+
+        model_id = model_dir if model_dir else model_size
+        if not model_id:
+            raise ValueError("Either model_size or model_dir must be set")
+
+        logger.info(f"Loading Transformers pipeline with model {model_id}...")
+        
+        device = 0 if torch.cuda.is_available() else -1
+        
+        # Suppress the attention mask warning (it's harmless for Whisper)
+        warnings.filterwarnings("ignore", message=".*attention_mask.*")
+        
+        # Load pipeline with automatic device placement
+        self.pipe = pipeline(
+            "automatic-speech-recognition",
+            model=model_id,
+            device=device,
+        )
+        return self.pipe
+
+    def transcribe(self, audio: np.ndarray, init_prompt: str = "", **kwargs) -> dict:
+        # Prepare generation arguments
+        # Default to word timestamps unless overridden
+        if "return_timestamps" not in kwargs:
+            kwargs["return_timestamps"] = "word"
+            
+        generate_kwargs = {}
+        if self.original_language:
+            generate_kwargs["language"] = self.original_language
+            
+        # Handle task
+        task = self.transcribe_kargs.get("task", "transcribe")
+        # Allow kwargs to override task if needed
+        if "task" in kwargs:
+            task = kwargs.pop("task")
+            
+        generate_kwargs["task"] = task
+        
+        # Warn about init_prompt if provided
+        if init_prompt:
+            logger.debug("TransformersASR: init_prompt is ignored in this implementation.")
+
+        # Ensure audio is float32
+        if hasattr(audio, "dtype") and audio.dtype != np.float32:
+            audio = audio.astype(np.float32)
+
+        # Determine audio duration to optimize chunk size
+        audio_duration = len(audio) / 16000  # Assuming 16kHz sample rate
+        
+        # For short audio (< 15s), don't use chunking for faster processing
+        # For longer audio, use smaller chunks for real-time streaming
+        if audio_duration < 15:
+            # Short audio - process directly without chunking
+            result = self.model(
+                audio,
+                generate_kwargs=generate_kwargs,
+                **kwargs
+            )
+        else:
+            # Longer audio - use smaller chunks for lower latency
+            result = self.model(
+                audio, 
+                chunk_length_s=10,  # Reduced from 30 for faster streaming
+                batch_size=1,  # Process one chunk at a time for lower latency
+                generate_kwargs=generate_kwargs,
+                **kwargs
+            )
+        return result
+
+    def ts_words(self, result) -> List[ASRToken]:
+        tokens = []
+        # Transformers return_timestamps="word" returns chunks with word timestamps
+        chunks = result.get("chunks", [])
+        
+        # For translation mode, timestamps might be None - estimate them
+        audio_duration = 30.0  # Assume 30s chunks max
+        num_chunks = len(chunks)
+        
+        for i, chunk in enumerate(chunks):
+            text = chunk.get("text", "").strip()
+            if not text:
+                continue
+                
+            timestamp = chunk.get("timestamp")
+            
+            # Handle timestamp extraction
+            if timestamp and isinstance(timestamp, (list, tuple)) and len(timestamp) == 2:
+                start, end = timestamp
+                
+                # If we have valid timestamps, use them
+                if start is not None and end is not None:
+                    tokens.append(ASRToken(start, end, text))
+                elif start is not None:
+                    # Only start time - estimate end
+                    estimated_end = start + 0.5  # Assume ~0.5s per word
+                    tokens.append(ASRToken(start, estimated_end, text))
+                else:
+                    # No valid timestamps - estimate based on position
+                    if num_chunks > 0:
+                        estimated_start = (i / num_chunks) * audio_duration
+                        estimated_end = ((i + 1) / num_chunks) * audio_duration
+                        tokens.append(ASRToken(estimated_start, estimated_end, text))
+            else:
+                # No timestamp at all - estimate based on position  
+                if num_chunks > 0:
+                    estimated_start = (i / num_chunks) * audio_duration
+                    estimated_end = ((i + 1) / num_chunks) * audio_duration
+                    tokens.append(ASRToken(estimated_start, estimated_end, text))
+                    
+        return tokens
+
+    def segments_end_ts(self, result) -> List[float]:
+        # Return the end timestamp of every chunk (word) since we don't have sentence segments
+        chunks = result.get("chunks", [])
+        end_times = []
+        
+        for i, c in enumerate(chunks):
+            timestamp = c.get("timestamp")
+            if timestamp and isinstance(timestamp, (list, tuple)) and len(timestamp) >= 2:
+                end = timestamp[1]
+                if end is not None:
+                    end_times.append(end)
+                else:
+                    # Estimate end time
+                    end_times.append((i + 1) * 0.5)  # ~0.5s per word estimate
+            else:
+                end_times.append((i + 1) * 0.5)
+                
+        return end_times
+
+    def use_vad(self):
+        pass

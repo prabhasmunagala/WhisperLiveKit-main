@@ -34,8 +34,16 @@ class HypothesisBuffer:
         """
         # Apply the offset to each token.
         new_tokens = [token.with_offset(offset) for token in new_tokens]
-        # Only keep tokens that are roughly “new”
+        
+        logger.debug(f"HypothesisBuffer.insert: Received {len(new_tokens)} tokens with offset {offset:.2f}")
+        logger.debug(f"HypothesisBuffer.insert: last_committed_time = {self.last_committed_time:.2f}")
+        
+        # Only keep tokens that are roughly "new"
         self.new = [token for token in new_tokens if token.start > self.last_committed_time - 0.1]
+        
+        logger.debug(f"HypothesisBuffer.insert: After filtering, {len(self.new)} tokens remain")
+        if self.new:
+            logger.debug(f"HypothesisBuffer.insert: New tokens: {[t.text for t in self.new[:5]]}")
 
         if self.new:
             first_token = self.new[0]
@@ -62,6 +70,13 @@ class HypothesisBuffer:
         between the previous hypothesis and the new tokens.
         """
         committed: List[ASRToken] = []
+        
+        logger.debug(f"HypothesisBuffer.flush: buffer has {len(self.buffer)} tokens, new has {len(self.new)} tokens")
+        if self.buffer:
+            logger.debug(f"HypothesisBuffer.flush: buffer = {[t.text for t in self.buffer[:5]]}")
+        if self.new:
+            logger.debug(f"HypothesisBuffer.flush: new = {[t.text for t in self.new[:5]]}")
+        
         while self.new:
             current_new = self.new[0]
             if self.confidence_validation and current_new.probability and current_new.probability > 0.95:
@@ -71,6 +86,7 @@ class HypothesisBuffer:
                 self.new.pop(0)
                 self.buffer.pop(0) if self.buffer else None
             elif not self.buffer:
+                logger.debug(f"HypothesisBuffer.flush: No buffer to compare, breaking")
                 break
             elif current_new.text == self.buffer[0].text:
                 committed.append(current_new)
@@ -78,11 +94,14 @@ class HypothesisBuffer:
                 self.last_committed_time = current_new.end
                 self.buffer.pop(0)
                 self.new.pop(0)
+                logger.debug(f"HypothesisBuffer.flush: Committed '{current_new.text}'")
             else:
+                logger.debug(f"HypothesisBuffer.flush: Mismatch - new='{current_new.text}' vs buffer='{self.buffer[0].text}'")
                 break
         self.buffer = self.new
         self.new = []
         self.committed_in_buffer.extend(committed)
+        logger.debug(f"HypothesisBuffer.flush: Committed {len(committed)} tokens total")
         return committed
 
     def pop_committed(self, time: float):
@@ -404,6 +423,13 @@ class OnlineASRProcessor:
         final_processed_upto = self.buffer_time_offset + (len(self.audio_buffer) / self.SAMPLING_RATE)
         self.buffer_time_offset = final_processed_upto
         return remaining_tokens, final_processed_upto
+
+    def flush(self) -> Tuple[List[ASRToken], float]:
+        """
+        Alias for finish() - flushes remaining buffer when streaming ends.
+        Compatible with SimulStreamingOnlineProcessor interface.
+        """
+        return self.finish()
 
     def concatenate_tokens(
         self,

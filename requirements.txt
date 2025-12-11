@@ -1,37 +1,67 @@
 # WhisperLiveKit Requirements
-# Core dependencies
+# =================================
+
+# Core Web Framework
 fastapi
 uvicorn
 websockets
+aiohttp  # Used by client for HTTP requests
 
 # Audio processing
 librosa
 soundfile
+numpy
+librosa
+pyaudio  # Required for microphone streaming (client)
+
+# Machine Learning - PyTorch
+torch>=2.0.0
 torchaudio>=2.0.0
 
-# Machine Learning
-torch>=2.0.0
+# Machine Learning - Hugging Face
 huggingface-hub>=0.25.0
+transformers  # Required for TransformersASR backend
+accelerate  # Required for efficient model loading
+safetensors  # Required for loading .safetensors model files
+
+# Tokenization and utilities
 tqdm
 tiktoken
+more-itertools  # Required for English normalizer
 
-# Whisper backends (install one or more)
-# For faster-whisper (recommended for transcription, not for translation):
+# FFmpeg for audio decoding
+imageio-ffmpeg  # Used for FFmpeg binary bundling
+
+# Whisper backends (install one or more):
+# -----------------------------------------
+
+# For faster-whisper (recommended for transcription):
 faster-whisper
 
-# For native PyTorch Whisper (required for direct translation):
+# For native PyTorch Whisper:
 openai-whisper
 
-# For MLX Whisper (Apple Silicon only):
+# For MLX Whisper (Apple Silicon/macOS ONLY - will NOT work on Windows):
 # mlx-whisper
+# mlx
 
-# Linux only - Triton for optimizations
+# Linux only - Triton for optimizations (uncomment if on Linux x86_64):
 # triton>=2.0.0
 
-# Optional: Diarization support
-# pyannote.audio
+# Optional dependencies for specific features:
+# =============================================
+
+# ONNX VAD (uncomment for ONNX runtime support):
+onnxruntime
+
+# Diarization - Diart backend (uncomment if needed):
+diart
+pyannote.audio
+rx
+
+# Diarization - Sortformer/NeMo backend (uncomment if needed):
 # nemo-toolkit[asr]
 
-# Optional: Sentence tokenization
-# mosestokenizer
-# wtpsplit
+# Sentence tokenization (uncomment if needed):
+mosestokenizer
+wtpsplit
